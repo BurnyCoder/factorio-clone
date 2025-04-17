@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Factorio Clone</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        /* Use Inter font */
+        body {
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start; /* Align content to the top */
+            min-height: 100vh;
+            background-color: #f0f4f8; /* Light gray background */
+            margin: 0;
+            padding-top: 20px; /* Add padding at the top */
+        }
+        /* Style the canvas */
+        #gameCanvas {
+            border: 1px solid #9ca3af; /* Gray border */
+            background-color: #e5e7eb; /* Lighter gray canvas background */
+            cursor: pointer;
+            border-radius: 8px; /* Rounded corners for canvas */
+            margin-bottom: 20px; /* Space below canvas */
+        }
+        /* Style the toolbar */
+        #toolbar {
+            display: flex;
+            gap: 10px; /* Space between buttons */
+            margin-bottom: 10px; /* Space below toolbar */
+            padding: 10px;
+            background-color: #ffffff; /* White background for toolbar */
+            border-radius: 8px; /* Rounded corners */
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Subtle shadow */
+        }
+        /* Style toolbar buttons */
+        .toolbar-button {
+            padding: 10px 15px;
+            border: 1px solid #d1d5db; /* Light gray border */
+            background-color: #f9fafb; /* Very light gray background */
+            color: #374151; /* Dark gray text */
+            cursor: pointer;
+            border-radius: 6px; /* Rounded corners */
+            font-weight: 600;
+            transition: background-color 0.2s, border-color 0.2s;
+        }
+        /* Style for selected button */
+        .toolbar-button.selected {
+            background-color: #3b82f6; /* Blue background */
+            color: #ffffff; /* White text */
+            border-color: #2563eb; /* Darker blue border */
+        }
+        /* Hover effect for buttons */
+        .toolbar-button:hover:not(.selected) {
+            background-color: #e5e7eb; /* Light gray hover */
+            border-color: #9ca3af;
+        }
+         /* Style for the resource display */
+        #resourceDisplay {
+            margin-bottom: 10px;
+            padding: 8px 15px;
+            background-color: #e0f2fe; /* Light blue background */
+            color: #075985; /* Dark blue text */
+            border: 1px solid #bae6fd; /* Blue border */
+            border-radius: 6px;
+            font-weight: 600;
+            min-width: 150px; /* Give it some width */
+            text-align: center;
+        }
+        /* Style for the message area */
+        #messageArea {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #fffbeb; /* Light yellow */
+            color: #92400e; /* Dark yellow/brown */
+            border: 1px solid #fde68a; /* Yellow border */
+            border-radius: 6px;
+            min-height: 40px; /* Ensure it has some height */
+            text-align: center;
+            width: 80%;
+            max-width: 600px;
+        }
+        /* Specific styles for resource patches */
+        .resource-iron {
+             background-color: #a1a1aa; /* Zinc 400 for iron ore */
+        }
+
+    </style>
+</head>
+<body>
+
+    <h1 class="text-2xl font-semibold mb-4 text-gray-700">Factorio Clone</h1>
+
+    <div id="toolbar">
+        <button class="toolbar-button" data-item="miner">Miner (M)</button>
+        <button class="toolbar-button" data-item="belt">Belt (B)</button>
+        <button class="toolbar-button" data-item="furnace">Furnace (F)</button>
+        <button class="toolbar-button" data-item="eraser">Eraser (E)</button>
+    </div>
+
+    <div id="resourceDisplay">Iron Ore: 0</div>
+
+    <canvas id="gameCanvas" width="600" height="400"></canvas>
+
+    <div id="messageArea">Select an item and click on the grid. Place miners on Iron Ore (gray squares)!</div>
+
+    <script>
+        // --- Configuration ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const toolbar = document.getElementById('toolbar');
+        const messageArea = document.getElementById('messageArea');
+        const resourceDisplay = document.getElementById('resourceDisplay');
+        const gridSize = 20; // Size of each grid cell in pixels
+        const gridWidth = canvas.width / gridSize;
+        const gridHeight = canvas.height / gridSize;
+        const gameTickInterval = 1000; // Game updates every 1000ms (1 second)
+        const resourcePatchChance = 0.05; // 5% chance for a tile to be an iron patch
+
+        // --- Game State ---
+        let selectedItem = null; // The item currently selected from the toolbar
+        // Grid now stores objects: { item: 'miner'|'belt'|null, resource: 'iron'|null }
+        let grid = createEmptyGrid();
+        let playerInventory = {
+            iron_ore: 0
+        };
+        let gameLoopIntervalId = null; // To store the interval ID
+
+        // --- Definitions ---
+        const items = {
+            miner: { color: '#4f46e5', symbol: 'M' },    // Indigo
+            belt: { color: '#ca8a04', symbol: 'B' },     // Yellow-Brown
+            furnace: { color: '#dc2626', symbol: 'F' }, // Red
+            eraser: { color: '#6b7280', symbol: 'E' }   // Gray (for toolbar)
+        };
+        const resources = {
+            iron_ore: { color: '#a1a1aa' } // Zinc 400 - A grayish color for iron
+        };
+
+        // --- Initialization ---
+        initializeGame();
+
+
+        // --- Functions ---
+
+        /**
+         * Sets up the initial game state, draws the grid, and starts the game loop.
+         */
+        function initializeGame() {
+            grid = createEmptyGrid(); // Generate resources
+            drawGrid();
+            setupEventListeners();
+            updateResourceDisplay();
+            startGameLoop();
+             displayMessage("Select an item (or press M, B, F, E) and click grid. Place miners on Iron Ore (gray)!");
+        }
+
+        /**
+         * Creates a grid, randomly placing resource patches.
+         * Each cell is an object { item: null, resource: null | 'iron_ore' }.
+         * @returns {Array<Array<object>>} The initialized grid.
+         */
+        function createEmptyGrid() {
+            const newGrid = [];
+            for (let y = 0; y < gridHeight; y++) {
+                newGrid[y] = [];
+                for (let x = 0; x < gridWidth; x++) {
+                    let resourceType = null;
+                    if (Math.random() < resourcePatchChance) {
+                        resourceType = 'iron_ore';
+                    }
+                    newGrid[y][x] = { item: null, resource: resourceType };
+                }
+            }
+            return newGrid;
+        }
+
+        /**
+         * Draws the grid lines, resources, and placed items onto the canvas.
+         */
+        function drawGrid() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#e5e7eb'; // Canvas background color
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw resources first
+            for (let y = 0; y < gridHeight; y++) {
+                for (let x = 0; x < gridWidth; x++) {
+                    const cell = grid[y][x];
+                    if (cell.resource && resources[cell.resource]) {
+                        const res = resources[cell.resource];
+                        const drawX = x * gridSize;
+                        const drawY = y * gridSize;
+                        ctx.fillStyle = res.color;
+                        ctx.fillRect(drawX, drawY, gridSize, gridSize);
+                    }
+                }
+            }
+
+             // Draw grid lines over resources
+            ctx.strokeStyle = '#d1d5db'; // Light gray grid lines
+            ctx.lineWidth = 0.5;
+            for (let x = 0; x <= canvas.width; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            for (let y = 0; y <= canvas.height; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+
+            // Draw placed items on top
+            ctx.font = `${gridSize * 0.6}px Arial`; // Font size relative to grid size
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            for (let y = 0; y < gridHeight; y++) {
+                for (let x = 0; x < gridWidth; x++) {
+                    const cell = grid[y][x];
+                    if (cell.item && items[cell.item]) {
+                        const item = items[cell.item];
+                        const drawX = x * gridSize;
+                        const drawY = y * gridSize;
+
+                        // Draw colored background square for the item
+                        ctx.fillStyle = item.color;
+                        // Slightly smaller rect to show resource underneath
+                        ctx.fillRect(drawX + 2, drawY + 2, gridSize - 4, gridSize - 4);
+
+                        // Optional: Draw item symbol
+                        // ctx.fillStyle = '#ffffff'; // White text for symbol
+                        // ctx.fillText(item.symbol, drawX + gridSize / 2, drawY + gridSize / 2);
+                    }
+                }
+            }
+        }
+
+        /**
+         * Sets up event listeners for toolbar buttons and canvas clicks.
+         */
+        function setupEventListeners() {
+            // Clear previous listeners if any (important for potential re-init)
+            toolbar.removeEventListener('click', handleToolbarClick);
+            canvas.removeEventListener('click', handleCanvasClick);
+            window.removeEventListener('keydown', handleKeyDown);
+
+            // Add new listeners
+            toolbar.addEventListener('click', handleToolbarClick);
+            canvas.addEventListener('click', handleCanvasClick);
+            window.addEventListener('keydown', handleKeyDown);
+        }
+
+        /** Handles clicks on the toolbar */
+        function handleToolbarClick(event) {
+             if (event.target.classList.contains('toolbar-button')) {
+                const itemType = event.target.dataset.item;
+                selectToolbarItem(itemType, event.target);
+            }
+        }
+
+         /** Handles keydown events for shortcuts */
+        function handleKeyDown(event) {
+            let itemType = null;
+            let button = null;
+            switch (event.key.toUpperCase()) {
+                case 'M': itemType = 'miner'; break;
+                case 'B': itemType = 'belt'; break;
+                case 'F': itemType = 'furnace'; break;
+                case 'E': itemType = 'eraser'; break;
+                case 'ESCAPE': itemType = null; break; // Deselect on Escape
+            }
+            if (itemType !== null || event.key === 'Escape') {
+                 button = toolbar.querySelector(`[data-item="${itemType}"]`);
+                 selectToolbarItem(itemType, button);
+            }
+        }
+
+
+        /**
+         * Updates the selected item state and toolbar button appearance.
+         * @param {string | null} itemType - The type of item selected, or null to deselect.
+         * @param {HTMLElement | null} clickedButton - The button element that was clicked/associated.
+         */
+        function selectToolbarItem(itemType, clickedButton) {
+            // Remove 'selected' class from all buttons
+            toolbar.querySelectorAll('.toolbar-button').forEach(btn => {
+                btn.classList.remove('selected');
+            });
+
+            if (itemType && items[itemType]) { // Check if it's a placeable item or eraser
+                selectedItem = itemType;
+                if (clickedButton) {
+                    clickedButton.classList.add('selected');
+                }
+                displayMessage(`Selected: ${itemType}. Click on the grid.`);
+            } else {
+                selectedItem = null; // Deselect
+                 displayMessage(`Selection cleared. Select an item from the toolbar.`);
+            }
+        }
+
+        /**
+         * Handles click events on the canvas to place or erase items.
+         * @param {MouseEvent} event - The mouse click event.
+         */
+        function handleCanvasClick(event) {
+            if (!selectedItem) {
+                displayMessage("Please select an item from the toolbar first!", "warning");
+                return;
+            }
+
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = event.clientX - rect.left;
+            const mouseY = event.clientY - rect.top;
+
+            // Calculate grid coordinates from mouse coordinates
+            const gridX = Math.floor(mouseX / gridSize);
+            const gridY = Math.floor(mouseY / gridSize);
+
+            // Check if click is within grid bounds
+            if (gridX >= 0 && gridX < gridWidth && gridY >= 0 && gridY < gridHeight) {
+                 const cell = grid[gridY][gridX]; // Get the cell object
+
+                if (selectedItem === 'eraser') {
+                    // Erase item at the clicked cell
+                    if (cell.item !== null) {
+                        cell.item = null; // Only erase the item, leave the resource
+                        drawGrid(); // Redraw the grid after erasing
+                        displayMessage(`Erased item at (${gridX}, ${gridY}).`);
+                    } else {
+                         displayMessage(`Cell (${gridX}, ${gridY}) has no item to erase.`, "info");
+                    }
+                } else {
+                    // Place the selected item if the cell has no item
+                    if (cell.item === null) {
+                        cell.item = selectedItem;
+                        drawGrid(); // Redraw the grid after placing
+                        const resourceMsg = cell.resource ? ` on ${cell.resource}` : '';
+                        displayMessage(`Placed ${selectedItem} at (${gridX}, ${gridY})${resourceMsg}.`);
+                    } else {
+                        displayMessage(`Cell (${gridX}, ${gridY}) already contains an item!`, "warning");
+                    }
+                }
+            }
+        }
+
+         /**
+         * Displays a message to the user in the message area.
+         * @param {string} text - The message text.
+         * @param {'info' | 'warning' | 'success'} type - The type of message for styling.
+         */
+        function displayMessage(text, type = 'info') {
+            messageArea.textContent = text;
+            // Base classes - ensuring padding, rounding, alignment etc. are always present
+            const baseClasses = ['p-2', 'rounded', 'text-center', 'w-full', 'max-w-md', 'mx-auto', 'border'];
+            messageArea.className = 'message-area ' + baseClasses.join(' '); // Reset to base + specific
+
+             // Apply Tailwind classes based on type
+            switch (type) {
+                case 'warning':
+                    messageArea.classList.add('bg-red-100', 'border-red-300', 'text-red-800');
+                    break;
+                case 'success':
+                     messageArea.classList.add('bg-green-100', 'border-green-300', 'text-green-800');
+                    break;
+                 case 'info': // Explicitly handle info
+                 default:
+                    messageArea.classList.add('bg-blue-100', 'border-blue-300', 'text-blue-800');
+                    break;
+            }
+        }
+
+        /** Updates the resource display HTML element */
+        function updateResourceDisplay() {
+            resourceDisplay.textContent = `Iron Ore: ${playerInventory.iron_ore}`;
+        }
+
+        /** Contains the logic that runs every game tick */
+        function gameTick() {
+            let minedThisTick = 0;
+            // Iterate through the grid to find miners on resources
+            for (let y = 0; y < gridHeight; y++) {
+                for (let x = 0; x < gridWidth; x++) {
+                    const cell = grid[y][x];
+                    // If there's a miner AND it's on an iron_ore patch
+                    if (cell.item === 'miner' && cell.resource === 'iron_ore') {
+                        playerInventory.iron_ore++;
+                        minedThisTick++;
+                    }
+                }
+            }
+
+            // Only update display if something changed
+            if (minedThisTick > 0) {
+                 updateResourceDisplay();
+                 // Optional: Log mining activity
+                 // console.log(`Mined ${minedThisTick} iron ore this tick.`);
+            }
+        }
+
+        /** Starts the main game loop */
+        function startGameLoop() {
+            if (gameLoopIntervalId) {
+                clearInterval(gameLoopIntervalId); // Clear existing loop if any
+            }
+            gameLoopIntervalId = setInterval(gameTick, gameTickInterval);
+            console.log("Game loop started.");
+        }
+
+        /** Stops the main game loop */
+        function stopGameLoop() {
+             if (gameLoopIntervalId) {
+                clearInterval(gameLoopIntervalId);
+                gameLoopIntervalId = null;
+                console.log("Game loop stopped.");
+            }
+        }
+
+        // Make sure the loop stops if the window/tab is closed or refreshed
+        window.addEventListener('beforeunload', stopGameLoop);
+
+
+    </script>
+
+</body>
+</html>
